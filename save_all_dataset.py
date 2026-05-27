@@ -38,7 +38,7 @@ def write_pgm(file_path, image):
         f.write(b'255\n')
         f.write(image.astype(np.uint8).tobytes())
 
-def manual_equalize_hist(img):
+def equalize_hist(img):
     hist, _ = np.histogram(img.flatten(), bins=256, range=[0, 256])
     cdf = hist.cumsum()
     cdf_masked = np.ma.masked_equal(cdf, 0)
@@ -46,7 +46,7 @@ def manual_equalize_hist(img):
     cdf = np.ma.filled(cdf_masked, 0).astype(np.uint8)
     return cdf[img]
 
-def manual_convolve2d(image, kernel):
+def convolve2d(image, kernel):
     k_h, k_w = kernel.shape
     pad_h, pad_w = k_h // 2, k_w // 2
     padded = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='edge')
@@ -56,7 +56,7 @@ def manual_convolve2d(image, kernel):
             output += padded[i : i + image.shape[0], j : j + image.shape[1]] * kernel[i, j]
     return output
 
-def manual_gaussian_blur(img):
+def gaussian_blur(img):
     kernel = np.array([
         [1,  4,  7,  4, 1],
         [4, 16, 26, 16, 4],
@@ -64,19 +64,19 @@ def manual_gaussian_blur(img):
         [4, 16, 26, 16, 4],
         [1,  4,  7,  4, 1]
     ], dtype=np.float64) / 273.0
-    blurred = manual_convolve2d(img, kernel)
+    blurred = convolve2d(img, kernel)
     return np.clip(blurred, 0, 255).astype(np.uint8)
 
-def manual_laplacian(img):
+def laplacian(img):
     kernel = np.array([
         [ 0,  1,  0],
         [ 1, -4,  1],
         [ 0,  1,  0]
     ], dtype=np.float64)
-    laplacian_img = manual_convolve2d(img, kernel)
+    laplacian_img = convolve2d(img, kernel)
     return np.clip(np.absolute(laplacian_img), 0, 255).astype(np.uint8)
 
-def manual_gamma_correction(img, gamma=1.0):
+def gamma_correction(img, gamma=1.0):
     inv_gamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)], dtype=np.uint8)
     return table[img]
@@ -98,11 +98,11 @@ def load_process_save_dataset(path_folder):
  
             img = read_pgm(file_path)
   
-            img_equ = manual_equalize_hist(img)
-            img_blur = manual_gaussian_blur(img_equ)
+            img_equ = equalize_hist(img)
+            img_blur = gaussian_blur(img_equ)
             
-            img_laplacian = manual_laplacian(img_equ)
-            img_gamma_bright = manual_gamma_correction(img, gamma=0.45)
+            img_laplacian = laplacian(img_equ)
+            img_gamma_bright = gamma_correction(img, gamma=0.45)
  
             base_filename        = os.path.basename(file_path)
             filename_without_ext = os.path.splitext(base_filename)[0]

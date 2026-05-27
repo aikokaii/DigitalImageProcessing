@@ -1,114 +1,121 @@
-import numpy as np
-import os
-import csv
+import sys
+import struct
+import zlib
+from PIL import Image
 
-#gray_img = np.random.randint(0, 256, (64, 64), dtype=np.uint8)  # 64x64 face
-#subject_id = "alice_123"
-#timestamp = datetime.now()
-#Image entering here must include ts ^
 
-class HilbertCurveCompressor:
-    def __init__(self, n):
-        self.n = n
-        self.size = 1 << n
+def _rot(n: int, x: int, y: int, rx: int, ry: int):
+    if ry == 0:
+        if rx == 1:
+            x = n - 1 - x
+            y = n - 1 - y
+        return (y, x)
+    return (x, y)
 
-    def _hilbert_curve(self, n):
-        if n == 0:
-            return np.array([[0, 0]])
-        prev = self._hilbert_curve(n - 1)
-        m = 1 << (n - 1)
-        q1 = np.column_stack((prev[:, 1], prev[:, 0]))                
-        q2 = np.column_stack((prev[:, 0], prev[:, 1] + m))           
-        q3 = np.column_stack((prev[:, 0] + m, prev[:, 1] + m))
-        q4 = np.column_stack((2*m - 1 - prev[:, 1], m - 1 - prev[:, 0]))
-        return np.vstack((q1, q2, q3, q4))
 
-    def get_curve_indices(self):
-        return self._hilbert_curve(self.n)
+def hilbert_index_to_xy(idx: int, order: int):
+    n = 1 << order
+    x = y = 0
+    s = 1
+    t = idx
+    while s < n:
+        rx = (t >> 1) & 1
+        ry = (t & 1) ^ rx
+        x, y = _rot(s, x, y, rx, ry)
+        x += s * rx
+        y += s * ry
+        t >>= 2
+        s <<= 1
+    return x, y
 
-    def image_to_curve(self, gray_image):
-        assert gray_image.shape == (self.size, self.size)
-        curve = self.get_curve_indices()
-        return np.array([gray_image[y, x] for y, x in curve], dtype=np.uint8)
 
-    def curve_to_image(self, curve_1d):
-        img = np.zeros((self.size, self.size), dtype=np.uint8)
-        curve = self.get_curve_indices()
-        for idx, (y, x) in enumerate(curve):
-            img[y, x] = curve_1d[idx]
-        return img
-    
-    pass
-    
-def compress_grayscale(gray_img, hilbert_compressor):
-    curve_data = hilbert_compressor.image_to_curve(gray_img)
-    
-    diff = np.diff(curve_data.astype(np.int16), prepend=curve_data[0])
-    
-    compressed = []
-    run_val = diff[0]
-    run_len = 1
-    for val in diff[1:]:
-        if val == run_val and run_len < 255:
-                run_len += 1
-        else:
-            compressed.extend([run_val, run_len])
-            run_val = val
-            run_len = 1
-    compressed.extend([run_val, run_len])
-    
-    return np.array(compressed, dtype=np.int16).tobytes()
-    
-def decompress_grayscale(compressed_bytes, hilbert_compressor, original_length):
-    diff_rle = np.frombuffer(compressed_bytes, dtype=np.int16)
+def next_power_of_two(n: int) -> int:
+    return 1 << (n - 1).bit_length()
 
-    diffs = []
-    for i in range(0, len(diff_rle), 2):
-        val = diff_rle[i]
-        length = diff_rle[i+1]
-        diffs.extend([val] * length)
-    diffs = np.array(diffs[:original_length], dtype=np.int16)
-        
-    curve_reconstructed = np.cumsum(diffs).astype(np.uint8)
-        
-    return hilbert_compressor.curve_to_image(curve_reconstructed)
-    
-def save_compressed_to_file(compressed_bytes, output_dir, face_id):
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, f"{face_id}.hilbert")
-    with open(filepath, "wb") as f:
-        f.write(np.array([gray_img.size], dtype=np.uint32).tobytes())
-        f.write(np.array([hilbert_comp.n], dtype=np.uint8).tobytes())
-        f.write(compressed_bytes)
-        
-    return filepath
 
-with open('dataset.csv', 'a', newline='') as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow([face_id, subject_id, timestamp, filepath])
+def compress_image(in_path: str, out_path: str):
+    img = Image.open(in_path).convert('RGB')
+    w, h = img.size
 
-def load_compressed_from_file(filepath):
-    with open(filepath, "rb") as f:
-        orig_size = np.frombuffer(f.read(4), dtype=np.uint32)[0]
-        order = np.frombuffer(f.read(1), dtype=np.uint8)[0]
-        compressed_bytes = f.read()
-    hc = HilbertCurveCompressor(order)
-    img = decompress_grayscale(compressed_bytes, hc, orig_size)
-    return img
+    M = next_power_of_two(max(w, h))
+    padded = Image.new('RGB', (M, M), (0, 0, 0))
+    padded.paste(img, (0, 0))
 
-compressed_bytes = compress_grayscale(gray_img, hilbert_comp)
+    pixels = list(padded.getdata())
+    order = M.bit_length() - 1
 
-face_id = f"{subject_id}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
+    reordered = bytearray()
+    for i in range(M * M):
+        x, y = hilbert_index_to_xy(i, order)
+        r, g, b = pixels[y * M + x]
+        reordered.extend([r, g, b])
 
-hilbert_comp = HilbertCurveCompressor(n=6)
+    compressed = zlib.compress(bytes(reordered), level=9)
 
-output_dir = "./compressed_faces/"
-filepath = save_compressed_to_file(compressed_bytes, output_dir, face_id)
+    with open(out_path, 'wb') as f:
+        f.write(b'HILC')
+        f.write(struct.pack('>II', w, h))
+        f.write(struct.pack('>I', M))
+        f.write(struct.pack('>I', len(compressed)))
+        f.write(compressed)
 
-#    orig_size = np.frombuffer(f.read(4), dtype=np.uint32)[0] 
-#   order = np.frombuffer(f.read(1), dtype=np.uint8)[0]
-#   compressed_bytes = f.read()
 
-#hc = HilbertCurveCompressor(order)
+def decompress_image(in_path: str, out_path: str):
+    with open(in_path, 'rb') as f:
+        magic = f.read(4)
+        if magic != b'HILC':
+            raise ValueError("Not a valid Hilbert‑compressed file")
 
-#recovered_img = decompress_grayscale(compressed_bytes, hc, orig_size)
+        w, h = struct.unpack('>II', f.read(8))
+        M = struct.unpack('>I', f.read(4))[0]
+        comp_len = struct.unpack('>I', f.read(4))[0]
+        compressed = f.read(comp_len)
+
+    data = zlib.decompress(compressed)
+    expected_len = M * M * 3
+    if len(data) != expected_len:
+        raise ValueError("Corrupted compressed data – size mismatch")
+
+    order = M.bit_length() - 1
+    pixels = [None] * (M * M)
+
+    for i in range(M * M):
+        x, y = hilbert_index_to_xy(i, order)
+        r, g, b = data[3*i : 3*i+3]
+        pixels[y * M + x] = (r, g, b)
+
+    padded_img = Image.new('RGB', (M, M))
+    padded_img.putdata(pixels)
+
+    cropped = padded_img.crop((0, 0, w, h))
+    cropped.save(out_path)
+
+
+def main():
+    if len(sys.argv) != 4:
+        print(__doc__)
+        sys.exit(1)
+
+    mode = sys.argv[1].lower()
+    in_file = sys.argv[2]
+    out_file = sys.argv[3]
+
+    if mode == 'compress':
+        compress_image(in_file, out_file)
+        print(f"Compressed {in_file} -> {out_file}")
+    elif mode == 'decompress':
+        decompress_image(in_file, out_file)
+        print(f"Decompressed {in_file} -> {out_file}")
+    else:
+        print(f"Unknown mode: {mode}. Use 'compress' or 'decompress'.")
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
+
+#for compression
+#python hilbert_compress.py compress image.jpg/png output.hil
+
+#for decompression
+#python hilbert_compress.py decompress output.hil restored.jpg/png

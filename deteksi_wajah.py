@@ -1,105 +1,240 @@
 import cv2
 import numpy as np
+import os
 
 # =========================
-# LOAD CASCADE CLASSIFIER
+# LOAD HAAR CASCADE
 # =========================
+
 face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    cv2.data.haarcascades +
+    'haarcascade_frontalface_default.xml'
 )
 
 eye_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + 'haarcascade_eye.xml'
+    cv2.data.haarcascades +
+    'haarcascade_eye.xml'
 )
 
 # =========================
-# WEBCAM
+# FOLDER INPUT
 # =========================
-cap = cv2.VideoCapture(0)
 
-if not cap.isOpened():
-    print("Webcam tidak ditemukan")
-    exit()
+input_folder = "webcam"
 
-print("Tekan Q untuk keluar")
+# =========================
+# FOLDER OUTPUT
+# =========================
 
-while True:
+output_skin = "hasil_skin"
+output_edge = "hasil_edge"
+output_detection = "hasil_deteksi"
 
-    # =========================
-    # AMBIL FRAME
-    # =========================
-    ret, frame = cap.read()
+os.makedirs(output_skin, exist_ok=True)
+os.makedirs(output_edge, exist_ok=True)
+os.makedirs(output_detection, exist_ok=True)
 
-    if not ret:
-        break
+# =========================
+# GAUSSIAN BLUR MANUAL
+# =========================
 
-    # Mirror camera
-    frame = cv2.flip(frame, 1)
+def gaussian_blur_manual(image):
 
-    # Resize agar ringan
-    frame = cv2.resize(frame, (640, 480))
+    kernel = np.array([
+        [1, 2, 1],
+        [2, 4, 2],
+        [1, 2, 1]
+    ], dtype=np.float32)
+
+    kernel = kernel / 16.0
+
+    height, width = image.shape
+
+    output = np.zeros_like(image)
+
+    padded = np.pad(
+        image,
+        ((1, 1), (1, 1)),
+        mode='constant'
+    )
+
+    for y in range(height):
+
+        for x in range(width):
+
+            region = padded[
+                y:y+3,
+                x:x+3
+            ]
+
+            value = np.sum(region * kernel)
+
+            output[y, x] = value
+
+    return output
+
+# =========================
+# SOBEL MANUAL
+# =========================
+
+def sobel_edge_detection(image):
+
+    sobel_x = np.array([
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1]
+    ])
+
+    sobel_y = np.array([
+        [-1, -2, -1],
+        [0,  0,  0],
+        [1,  2,  1]
+    ])
+
+    height, width = image.shape
+
+    output = np.zeros_like(image)
+
+    padded = np.pad(
+        image,
+        ((1, 1), (1, 1)),
+        mode='constant'
+    )
+
+    for y in range(height):
+
+        for x in range(width):
+
+            region = padded[
+                y:y+3,
+                x:x+3
+            ]
+
+            gx = np.sum(region * sobel_x)
+            gy = np.sum(region * sobel_y)
+
+            magnitude = np.sqrt(gx**2 + gy**2)
+
+            magnitude = min(255, magnitude)
+
+            output[y, x] = magnitude
+
+    return output.astype(np.uint8)
+
+# =========================
+# SKIN SEGMENTATION MANUAL
+# =========================
+
+def skin_segmentation_manual(hsv):
+
+    height, width, _ = hsv.shape
+
+    mask = np.zeros(
+        (height, width),
+        dtype=np.uint8
+    )
+
+    for y in range(height):
+
+        for x in range(width):
+
+            h = hsv[y, x, 0]
+            s = hsv[y, x, 1]
+            v = hsv[y, x, 2]
+
+            if (
+                0 <= h <= 20 and
+                30 <= s <= 150 and
+                60 <= v <= 255
+            ):
+
+                mask[y, x] = 255
+
+    return mask
+
+# =========================
+# AMBIL SEMUA GAMBAR
+# =========================
+
+image_files = []
+
+for file in os.listdir(input_folder):
+
+    if file.endswith(".png") or file.endswith(".pgm"):
+
+        image_files.append(file)
+
+# =========================
+# PROSES GAMBAR
+# =========================
+
+for image_name in image_files:
+
+    print(f"Memproses: {image_name}")
+
+    image_path = os.path.join(
+        input_folder,
+        image_name
+    )
+
+    frame = cv2.imread(image_path)
+
+    if frame is None:
+        continue
+
+    # Resize lebih kecil agar cepat
+    frame = cv2.resize(
+        frame,
+        (320, 240)
+    )
 
     # =========================
     # PREPROCESSING
     # =========================
 
-    # Convert ke grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2GRAY
+    )
 
-    # Perbaiki kontras
     gray = cv2.equalizeHist(gray)
 
     # =========================
-    # SKIN COLOR SEGMENTATION
+    # GAUSSIAN BLUR MANUAL
     # =========================
 
-    # Convert ke HSV
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    blurred = gaussian_blur_manual(gray)
 
-    # Range warna kulit
-    lower_skin = np.array([0, 30, 60], dtype=np.uint8)
-    upper_skin = np.array([20, 150, 255], dtype=np.uint8)
+    # =========================
+    # HSV
+    # =========================
 
-    # Membuat mask kulit
-    skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
-
-    # Mengurangi noise
-    kernel = np.ones((5, 5), np.uint8)
-
-    skin_mask = cv2.erode(
-        skin_mask,
-        kernel,
-        iterations=1
-    )
-
-    skin_mask = cv2.dilate(
-        skin_mask,
-        kernel,
-        iterations=2
-    )
-
-    # Blur supaya lebih halus
-    skin_mask = cv2.GaussianBlur(
-        skin_mask,
-        (5, 5),
-        0
+    hsv = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2HSV
     )
 
     # =========================
-    # EDGE DETECTION
+    # SKIN SEGMENTATION MANUAL
     # =========================
 
-    edges = cv2.Canny(gray, 100, 200)
+    skin_mask = skin_segmentation_manual(hsv)
 
     # =========================
-    # HAAR CASCADE FACE DETECTION
+    # EDGE DETECTION MANUAL
+    # =========================
+
+    edges = sobel_edge_detection(blurred)
+
+    # =========================
+    # FACE DETECTION
     # =========================
 
     faces = face_cascade.detectMultiScale(
-        gray,
+        blurred,
         scaleFactor=1.2,
         minNeighbors=5,
-        minSize=(100, 100)
+        minSize=(60, 60)
     )
 
     # =========================
@@ -108,11 +243,32 @@ while True:
 
     for (x, y, w, h) in faces:
 
+        # ROI wajah
+        roi_gray = blurred[
+            y:y+h,
+            x:x+w
+        ]
+
+        roi_color = frame[
+            y:y+h,
+            x:x+w
+        ]
+
         # =========================
-        # TEMPLATE MATCHING SEDERHANA
+        # TEMPLATE MATCHING
+        # =========================
+        # Bounding box wajah dipakai
+        # sebagai area template
+        # agar tidak salah sasaran
         # =========================
 
-        face_roi = gray[y:y+h, x:x+w]
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + w, y + h),
+            (0, 255, 255),
+            2
+        )
 
         # =========================
         # LINGKARAN WAJAH
@@ -134,13 +290,6 @@ while True:
         )
 
         # =========================
-        # ROI WAJAH
-        # =========================
-
-        roi_gray = gray[y:y+h, x:x+w]
-        roi_color = frame[y:y+h, x:x+w]
-
-        # =========================
         # DETEKSI MATA
         # =========================
 
@@ -148,22 +297,18 @@ while True:
             roi_gray,
             scaleFactor=1.05,
             minNeighbors=9,
-            minSize=(25, 25)
+            minSize=(20, 20)
         )
 
         filtered_eyes = []
 
-        # =========================
-        # FILTER MATA
-        # =========================
-
         for (ex, ey, ew, eh) in eyes:
 
-            # Mata harus di bagian atas wajah
+            # Mata hanya bagian atas wajah
             if ey < h * 0.5:
 
                 # Hindari objek kecil
-                if ew > 30 and eh > 30:
+                if ew > 15 and eh > 15:
 
                     filtered_eyes.append(
                         (ex, ey, ew, eh)
@@ -207,34 +352,47 @@ while True:
             )
 
     # =========================
-    # TAMPILKAN HASIL
+    # NAMA FILE
     # =========================
 
-    cv2.imshow(
-        "Face Detection",
-        frame
-    )
+    filename = os.path.splitext(
+        image_name
+    )[0]
 
-    cv2.imshow(
-        "Skin Segmentation",
+    # =========================
+    # SIMPAN HASIL
+    # =========================
+
+    cv2.imwrite(
+        os.path.join(
+            output_skin,
+            filename + "_skin.png"
+        ),
         skin_mask
     )
 
-    cv2.imshow(
-        "Edge Detection",
+    cv2.imwrite(
+        os.path.join(
+            output_edge,
+            filename + "_edge.png"
+        ),
         edges
     )
 
-    # =========================
-    # EXIT
-    # =========================
+    cv2.imwrite(
+        os.path.join(
+            output_detection,
+            filename + "_detected.png"
+        ),
+        frame
+    )
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    print(f"Selesai: {image_name}")
 
 # =========================
-# RELEASE
+# SELESAI
 # =========================
 
-cap.release()
 cv2.destroyAllWindows()
+
+print("Semua gambar berhasil diproses")

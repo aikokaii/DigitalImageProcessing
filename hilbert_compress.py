@@ -1,121 +1,356 @@
-import sys
-import struct
-import zlib
-from PIL import Image
+import numpy as np
+import os
+import cv2
+import csv
+import base64
+from datetime import datetime
+
+# =====================================================
+# HILBERT CURVE COMPRESSOR
+# =====================================================
+
+class HilbertCurveCompressor:
+
+    def __init__(self, n):
+
+        self.n = n
+        self.size = 1 << n
+
+    def _hilbert_curve(self, n):
+
+        if n == 0:
+            return np.array([[0, 0]])
+
+        prev = self._hilbert_curve(n - 1)
+
+        m = 1 << (n - 1)
+
+        q1 = np.column_stack((
+            prev[:, 1],
+            prev[:, 0]
+        ))
+
+        q2 = np.column_stack((
+            prev[:, 0],
+            prev[:, 1] + m
+        ))
+
+        q3 = np.column_stack((
+            prev[:, 0] + m,
+            prev[:, 1] + m
+        ))
+
+        q4 = np.column_stack((
+            2 * m - 1 - prev[:, 1],
+            m - 1 - prev[:, 0]
+        ))
+
+        return np.vstack((q1, q2, q3, q4))
+
+    def get_curve_indices(self):
+
+        return self._hilbert_curve(self.n)
+
+    def image_to_curve(self, gray_image):
+
+        assert gray_image.shape == (
+            self.size,
+            self.size
+        )
+
+        curve = self.get_curve_indices()
+
+        return np.array([
+            gray_image[y, x]
+            for y, x in curve
+        ], dtype=np.uint8)
+
+    def curve_to_image(self, curve_1d):
+
+        img = np.zeros(
+            (self.size, self.size),
+            dtype=np.uint8
+        )
+
+        curve = self.get_curve_indices()
+
+        for idx, (y, x) in enumerate(curve):
+
+            img[y, x] = curve_1d[idx]
+
+        return img
 
 
-def _rot(n: int, x: int, y: int, rx: int, ry: int):
-    if ry == 0:
-        if rx == 1:
-            x = n - 1 - x
-            y = n - 1 - y
-        return (y, x)
-    return (x, y)
+# =====================================================
+# KOMPRESI
+# =====================================================
+
+def compress_grayscale(
+    gray_img,
+    hilbert_compressor
+):
+
+    curve_data = hilbert_compressor.image_to_curve(
+        gray_img
+    )
+
+    diff = np.diff(
+        curve_data.astype(np.int16),
+        prepend=curve_data[0]
+    )
+
+    compressed = []
+
+    run_val = diff[0]
+    run_len = 1
+
+    for val in diff[1:]:
+
+        if val == run_val and run_len < 255:
+
+            run_len += 1
+
+        else:
+
+            compressed.extend([
+                run_val,
+                run_len
+            ])
+
+            run_val = val
+            run_len = 1
+
+    compressed.extend([
+        run_val,
+        run_len
+    ])
+
+    return np.array(
+        compressed,
+        dtype=np.int16
+    ).tobytes()
 
 
-def hilbert_index_to_xy(idx: int, order: int):
-    n = 1 << order
-    x = y = 0
-    s = 1
-    t = idx
-    while s < n:
-        rx = (t >> 1) & 1
-        ry = (t & 1) ^ rx
-        x, y = _rot(s, x, y, rx, ry)
-        x += s * rx
-        y += s * ry
-        t >>= 2
-        s <<= 1
-    return x, y
+# =====================================================
+# DEKOMPRESI
+# =====================================================
+
+def decompress_grayscale(
+    compressed_bytes,
+    hilbert_compressor,
+    original_length
+):
+
+    diff_rle = np.frombuffer(
+        compressed_bytes,
+        dtype=np.int16
+    )
+
+    diffs = []
+
+    for i in range(0, len(diff_rle), 2):
+
+        val = diff_rle[i]
+
+        length = diff_rle[i + 1]
+
+        diffs.extend([val] * length)
+
+    diffs = np.array(
+        diffs[:original_length],
+        dtype=np.int16
+    )
+
+    curve_reconstructed = np.cumsum(
+        diffs
+    ).astype(np.uint8)
+
+    return hilbert_compressor.curve_to_image(
+        curve_reconstructed
+    )
 
 
-def next_power_of_two(n: int) -> int:
-    return 1 << (n - 1).bit_length()
+# =====================================================
+# CSV DATABASE
+# =====================================================
+
+csv_database = "dataset.csv"
+
+if not os.path.exists(csv_database):
+
+    with open(
+        csv_database,
+        mode='w',
+        newline='',
+        encoding='utf-8'
+    ) as file:
+
+        writer = csv.writer(file)
+
+        writer.writerow([
+
+            "face_id",
+            "filename",
+            "timestamp",
+            "image_size",
+            "hilbert_order",
+            "compressed_data"
+
+        ])
 
 
-def compress_image(in_path: str, out_path: str):
-    img = Image.open(in_path).convert('RGB')
-    w, h = img.size
+# =====================================================
+# FOLDER WEBCAM
+# =====================================================
 
-    M = next_power_of_two(max(w, h))
-    padded = Image.new('RGB', (M, M), (0, 0, 0))
-    padded.paste(img, (0, 0))
+input_folder = "webcam"
 
-    pixels = list(padded.getdata())
-    order = M.bit_length() - 1
+if not os.path.exists(input_folder):
 
-    reordered = bytearray()
-    for i in range(M * M):
-        x, y = hilbert_index_to_xy(i, order)
-        r, g, b = pixels[y * M + x]
-        reordered.extend([r, g, b])
-
-    compressed = zlib.compress(bytes(reordered), level=9)
-
-    with open(out_path, 'wb') as f:
-        f.write(b'HILC')
-        f.write(struct.pack('>II', w, h))
-        f.write(struct.pack('>I', M))
-        f.write(struct.pack('>I', len(compressed)))
-        f.write(compressed)
+    print("Folder webcam tidak ditemukan")
+    exit()
 
 
-def decompress_image(in_path: str, out_path: str):
-    with open(in_path, 'rb') as f:
-        magic = f.read(4)
-        if magic != b'HILC':
-            raise ValueError("Not a valid Hilbert‑compressed file")
+# =====================================================
+# HILBERT SETTING
+# =====================================================
 
-        w, h = struct.unpack('>II', f.read(8))
-        M = struct.unpack('>I', f.read(4))[0]
-        comp_len = struct.unpack('>I', f.read(4))[0]
-        compressed = f.read(comp_len)
+order = 8
 
-    data = zlib.decompress(compressed)
-    expected_len = M * M * 3
-    if len(data) != expected_len:
-        raise ValueError("Corrupted compressed data – size mismatch")
-
-    order = M.bit_length() - 1
-    pixels = [None] * (M * M)
-
-    for i in range(M * M):
-        x, y = hilbert_index_to_xy(i, order)
-        r, g, b = data[3*i : 3*i+3]
-        pixels[y * M + x] = (r, g, b)
-
-    padded_img = Image.new('RGB', (M, M))
-    padded_img.putdata(pixels)
-
-    cropped = padded_img.crop((0, 0, w, h))
-    cropped.save(out_path)
+hilbert_comp = HilbertCurveCompressor(order)
 
 
-def main():
-    if len(sys.argv) != 4:
-        print(__doc__)
-        sys.exit(1)
+# =====================================================
+# AMBIL FILE GAMBAR
+# =====================================================
 
-    mode = sys.argv[1].lower()
-    in_file = sys.argv[2]
-    out_file = sys.argv[3]
+image_files = []
 
-    if mode == 'compress':
-        compress_image(in_file, out_file)
-        print(f"Compressed {in_file} -> {out_file}")
-    elif mode == 'decompress':
-        decompress_image(in_file, out_file)
-        print(f"Decompressed {in_file} -> {out_file}")
+for file in os.listdir(input_folder):
+
+    if (
+        file.endswith(".png")
+        or
+        file.endswith(".pgm")
+    ):
+
+        image_files.append(file)
+
+
+# =====================================================
+# PROSES SEMUA GAMBAR
+# =====================================================
+
+for index, image_name in enumerate(image_files):
+
+    print(f"Memproses: {image_name}")
+
+    image_path = os.path.join(
+        input_folder,
+        image_name
+    )
+
+    # =================================================
+    # LOAD IMAGE
+    # =================================================
+
+    if image_name.endswith(".pgm"):
+
+        gray_img = cv2.imread(
+            image_path,
+            cv2.IMREAD_GRAYSCALE
+        )
+
     else:
-        print(f"Unknown mode: {mode}. Use 'compress' or 'decompress'.")
-        sys.exit(1)
+
+        img = cv2.imread(image_path)
+
+        if img is None:
+            continue
+
+        gray_img = cv2.cvtColor(
+            img,
+            cv2.COLOR_BGR2GRAY
+        )
+
+    # =================================================
+    # RESIZE
+    # =================================================
+
+    gray_img = cv2.resize(
+        gray_img,
+        (256, 256)
+    )
+
+    # =================================================
+    # KOMPRESI HILBERT
+    # =================================================
+
+    compressed_bytes = compress_grayscale(
+        gray_img,
+        hilbert_comp
+    )
+
+    # =================================================
+    # BYTE → BASE64
+    # =================================================
+
+    compressed_base64 = base64.b64encode(
+        compressed_bytes
+    ).decode('utf-8')
+
+    # =================================================
+    # TIMESTAMP
+    # =================================================
+
+    timestamp = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    # =================================================
+    # FACE ID
+    # =================================================
+
+    filename_only = os.path.splitext(
+        image_name
+    )[0]
+
+    face_id = (
+        f"FACE_{index+1}_"
+        f"{filename_only}"
+    )
+
+    # =================================================
+    # SIMPAN KE CSV
+    # =================================================
+
+    with open(
+        csv_database,
+        mode='a',
+        newline='',
+        encoding='utf-8'
+    ) as file:
+
+        writer = csv.writer(file)
+
+        writer.writerow([
+
+            face_id,
+            image_name,
+            timestamp,
+            gray_img.size,
+            order,
+            compressed_base64
+
+        ])
+
+    print(
+        f"Berhasil disimpan ke CSV: {face_id}"
+    )
 
 
-if __name__ == '__main__':
-    main()
+# =====================================================
+# FINISH
+# =====================================================
 
-#for compression
-#python hilbert_compress.py compress image.jpg/png output.hil
-
-#for decompression
-#python hilbert_compress.py decompress output.hil restored.jpg/png
+print("Semua gambar webcam berhasil diproses")

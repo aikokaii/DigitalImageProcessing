@@ -28,7 +28,7 @@ Untuk memastikan keunikan setiap individu, sistem melakukan analisa tekstur loka
 - **Local Binary Pattern (LBP) Histogram**: Membaca pori-pori dan tekstur halus wajah menggunakan komputasi matriks *bitwise*.
 - **Grid 4x4 Features**: Memecah wajah ke dalam 16 area kecil untuk diukur intensitas cahaya, penyebaran area kulit, dan kerapatan garisnya.
 
-### 4. 📊 Visualisasi Dashboard 6-Panel
+### 4. Visualisasi Dashboard 6-Panel
 Sistem dilengkapi modul visualizer berbasis Matplotlib yang memetakan kembali angka-angka di database ke dalam gambar asli secara akurat (dengan titik koordinat dan mask segmentasi asli).
 
 ---

@@ -58,18 +58,6 @@ for image_name in image_files:
     gray = rgb_to_gray_manual(frame)
     gray = equalize_hist(gray)
     
-    blurred = gaussian_blur_manual(gray)
-    
-    # Custom HSV conversion (menyesuaikan rentang OpenCV: H 0-179, S 0-255, V 0-255)
-    pil_hsv = np.array(pil_img.convert('HSV'))
-    hsv = np.zeros_like(pil_hsv)
-    hsv[:, :, 0] = (pil_hsv[:, :, 0].astype(np.float32) * 179 / 255).astype(np.uint8) # H
-    hsv[:, :, 1] = pil_hsv[:, :, 1] # S
-    hsv[:, :, 2] = pil_hsv[:, :, 2] # V
-    
-    skin_mask = skin_segmentation_manual(hsv)
-    edges = sobel_edge_detection(blurred)
-
     print(f"-> Detecting faces using from-scratch cascade on {image_name}...")
     # NOTE: It is very slow in pure python!
     raw_faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=3, minSize=(30, 30))
@@ -79,10 +67,13 @@ for image_name in image_files:
     faces = [(x, y, w, h) for (x, y, w, h) in raw_faces if w >= 60 and h >= 60]
 
     if len(faces) == 0:
-        print(f"Wajah tidak terdeteksi pada {image_name}, di-skip.")
-        continue
+        print(f"Wajah tidak terdeteksi pada {image_name}, menggunakan fallback (seluruh gambar).")
+        # Jika tidak terdeteksi, kita anggap seluruh gambar adalah wajah
+        faces = [(0, 0, frame.shape[1], frame.shape[0])]
         
     final_crop = frame # Default ke full frame jika tidak ada wajah
+    skin_mask = None
+    edges = None
     
     for (x, y, w, h) in faces:
         # Perlebar kotak secara vertikal agar mulut tidak terpotong
@@ -97,6 +88,18 @@ for image_name in image_files:
         # Crop bagian wajah saja!
         final_crop = roi_color 
         
+        # Ekstrak skin dan edge dari hasil crop (agar bebas dari noise background)
+        blurred_crop = gaussian_blur_manual(roi_gray)
+        pil_img_crop = Image.fromarray(roi_color)
+        pil_hsv_crop = np.array(pil_img_crop.convert('HSV'))
+        hsv_crop = np.zeros_like(pil_hsv_crop)
+        hsv_crop[:, :, 0] = (pil_hsv_crop[:, :, 0].astype(np.float32) * 179 / 255).astype(np.uint8)
+        hsv_crop[:, :, 1] = pil_hsv_crop[:, :, 1]
+        hsv_crop[:, :, 2] = pil_hsv_crop[:, :, 2]
+        
+        skin_mask = skin_segmentation_manual(hsv_crop)
+        edges = sobel_edge_detection(blurred_crop)
+        
         # NOTE: Eye detection perlu jalan di h asli atau h_new bebas
         h = h_new 
 
@@ -108,11 +111,27 @@ for image_name in image_files:
         
         # Lingkaran tidak lagi digambar, tetapi variabel filtered_eyes tetap menyimpan koordinatnya!
 
+    # Pisahkan dataset latih dan testing secara total
+    if "datatest" in image_name.lower():
+        target_folder = "datatest"
+        out_skin = "datatest_skin"
+        out_edge = "datatest_edge"
+    else:
+        target_folder = output_detection
+        out_skin = output_skin
+        out_edge = output_edge
+
+    os.makedirs(target_folder, exist_ok=True)
+    os.makedirs(out_skin, exist_ok=True)
+    os.makedirs(out_edge, exist_ok=True)
+
     filename = os.path.splitext(image_name)[0]
 
-    Image.fromarray(skin_mask, mode='L').save(os.path.join(output_skin, filename + "_skin.png"))
-    Image.fromarray(edges, mode='L').save(os.path.join(output_edge, filename + "_edge.png"))
-    Image.fromarray(final_crop, mode='RGB').save(os.path.join(output_detection, f"{filename}_face detected.png"))
-    print(f"Selesai: {image_name}")
+    if skin_mask is not None and edges is not None:
+        Image.fromarray(skin_mask, mode='L').save(os.path.join(out_skin, filename + "_skin.png"))
+        Image.fromarray(edges, mode='L').save(os.path.join(out_edge, filename + "_edge.png"))
+        
+    Image.fromarray(final_crop, mode='RGB').save(os.path.join(target_folder, f"{filename}_face detected.png"))
+    print(f"Selesai: {image_name} (Tersimpan di folder '{target_folder}')")
 
 print("Semua gambar berhasil diproses")

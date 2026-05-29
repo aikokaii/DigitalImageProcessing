@@ -1,0 +1,78 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+
+\title{Rumus Matematika Eigenface (Principal Component Analysis)}
+\author{Berdasarkan Implementasi eigenface.py}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Pendahuluan}
+Dokumen ini menguraikan dasar matematis dari algoritma Eigenface yang diimplementasikan pada file \texttt{eigenface.py}. Pendekatan ini sejalan dengan teori ekstraksi fitur (Principal Component Analysis) dalam literatur Pengolahan Citra Digital (misalnya Gonzalez \& Woods).
+
+\section{Representasi Citra Wajah}
+Setiap citra wajah yang berukuran $N \times M$ piksel diubah (di-flatten) menjadi sebuah vektor kolom tunggal berdimensi $D$ (di mana $D = N \times M$).
+Misalkan terdapat $M$ buah citra wajah dalam dataset pelatihan, maka himpunan citra wajah dinyatakan sebagai:
+\begin{equation}
+    \Gamma_1, \Gamma_2, \Gamma_3, \dots, \Gamma_M
+\end{equation}
+
+\section{Wajah Rata-rata (Mean Face)}
+Tahap pertama adalah menghitung wajah rata-rata dari seluruh data latih. Pada kode Python, ini dilakukan dengan \texttt{np.mean(X, axis=0)}.
+\begin{equation}
+    \Psi = \frac{1}{M} \sum_{i=1}^{M} \Gamma_i
+\end{equation}
+
+\section{Pemusatan Data (Mean Subtraction)}
+Selisih antara setiap citra wajah dengan wajah rata-rata dihitung untuk memusatkan data. Matriks $A$ berisi kumpulan vektor selisih ini.
+\begin{equation}
+    \Phi_i = \Gamma_i - \Psi
+\end{equation}
+\begin{equation}
+    A = [\Phi_1, \Phi_2, \dots, \Phi_M]
+\end{equation}
+
+\section{Matriks Kovarian dan Reduksi Dimensi}
+Matriks kovarian idealnya adalah $C = A A^T$ (berukuran $D \times D$). Karena $D$ sangat besar (misal $10000 \times 10000$), komputasi langsung sangat berat. Oleh karena itu, kita menghitung matriks alternatif $L$ yang berukuran $M \times M$ (pada kode: \texttt{L = np.dot(A, A.T)} jika $A$ berbentuk baris).
+\begin{equation}
+    L = A^T A
+\end{equation}
+Kemudian, kita mencari nilai eigen ($\lambda_i$) dan vektor eigen ($v_i$) dari matriks $L$:
+\begin{equation}
+    L v_i = \lambda_i v_i
+\end{equation}
+
+\section{Pembentukan Eigenfaces (Ruang Wajah)}
+Vektor eigen dari matriks $L$ ($v_i$) kemudian dipetakan kembali ke ruang piksel asli untuk mendapatkan matriks Eigenfaces ($u_i$). Pada kode: \texttt{np.dot(A.T, eigenvectors)}.
+\begin{equation}
+    u_i = A v_i
+\end{equation}
+Vektor $u_i$ ini kemudian dinormalisasi sehingga panjangnya sama dengan 1 ($\|u_i\| = 1$). Vektor-vektor $u_i$ inilah yang disebut sebagai \textbf{Eigenfaces}.
+
+\section{Ekstraksi Fitur (Feature Vector / Weights)}
+Setiap citra wajah latih diproyeksikan ke dalam ruang Eigenfaces untuk mendapatkan vektor fitur (bobot). Pada kode: \texttt{weights = np.dot(A, self.eigenfaces)}.
+\begin{equation}
+    \omega_k = u_k^T \Phi
+\end{equation}
+Vektor fitur untuk satu wajah adalah:
+\begin{equation}
+    \Omega = \begin{bmatrix} \omega_1 \\ \omega_2 \\ \vdots \\ \omega_K \end{bmatrix}
+\end{equation}
+Di mana $K \leq M$ adalah jumlah komponen utama yang dipertahankan.
+
+\section{Klasifikasi (Pencocokan Jarak)}
+Ketika ada citra wajah uji (test face) $\Gamma_{test}$, wajah ini dikurangi dengan wajah rata-rata ($\Phi_{test} = \Gamma_{test} - \Psi$) dan diproyeksikan ke ruang Eigenfaces untuk mendapatkan vektor fitur $\Omega_{test}$.
+
+Untuk menentukan identitas, dihitung jarak Euclidean antara vektor fitur uji dengan seluruh vektor fitur latih:
+\begin{equation}
+    d_i = \| \Omega_{test} - \Omega_i \|_2 = \sqrt{\sum_{j=1}^{K} (\omega_{test,j} - \omega_{i,j})^2}
+\end{equation}
+Wajah diklasifikasikan sebagai individu $k$ yang memiliki jarak $d_k$ terkecil (Nearest Neighbor). Jika $d_k$ melebihi suatu \textit{threshold}, maka wajah dianggap tidak dikenali.
+
+\end{document}

@@ -1,23 +1,3 @@
-"""
-pencocokan_wajah.py
--------------------
-Tahap 6 & 7: Pencocokan Wajah + Identifikasi & Keputusan.
-
-Cara pakai:
-    python pencocokan_wajah.py <path_gambar> [--threshold 12.0] [--metode euclidean]
-
-Contoh:
-    python pencocokan_wajah.py webcam/face.jpg
-    python pencocokan_wajah.py webcam/face.jpg --threshold 10.0 --metode cosine
-
-Alur kerja:
-    1. Baca gambar input
-    2. Deteksi & crop wajah (ManualCascadeClassifier)
-    3. Ekstraksi fitur (FaceFeatureExtractor)
-    4. Cocokkan ke database (FaceMatcher)
-    5. Tampilkan hasil + visualisasi
-"""
-
 import os
 import sys
 import argparse

@@ -129,15 +129,14 @@ def main():
             gagal += 1
             continue
 
-        # --- E. Simpan mask untuk visualisasi ---
-        # NOTE: Dinonaktifkan agar tidak mengotori folder hasil_deteksi
-        # base = image_name.replace('face detected.png', '')
-        # Image.fromarray(masks["skin"],    mode='L').save(
-        #     os.path.join(input_folder, base + 'skin_crop.png'))
-        # Image.fromarray(masks["edge"],    mode='L').save(
-        #     os.path.join(input_folder, base + 'edge_crop.png'))
-        # Image.fromarray(masks["contour"], mode='L').save(
-        #     os.path.join(input_folder, base + 'contour_crop.png'))
+        # 4. Simpan Mask untuk Visualisasi
+        skin_path = os.path.join(input_folder, image_name.replace('face detected.png', 'skin_crop.png'))
+        edge_path = os.path.join(input_folder, image_name.replace('face detected.png', 'edge_crop.png'))
+        contour_path = os.path.join(input_folder, image_name.replace('face detected.png', 'contour_crop.png'))
+        
+        Image.fromarray(masks["skin"], mode='L').save(skin_path)
+        Image.fromarray(masks["edge"], mode='L').save(edge_path)
+        Image.fromarray(masks["contour"], mode='L').save(contour_path)
 
         # --- F. Simpan ke database ---
         db.add_profile(nama_orang, fitur)

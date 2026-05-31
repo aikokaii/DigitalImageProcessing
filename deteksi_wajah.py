@@ -186,23 +186,15 @@ for image_name in image_files:
         )
 
     # =========================
-    # FALLBACK JIKA TIDAK ADA WAJAH
+    # JIKA TIDAK ADA WAJAH -> BUANG
     # =========================
     if not face_detected:
 
         print(
-            f"Wajah tidak terdeteksi pada {image_name}, menggunakan fallback (seluruh gambar)."
+            f"Wajah tidak terdeteksi pada {image_name}, membuang gambar (tidak disimpan)."
         )
 
-        faces = [
-
-            (
-                0,
-                0,
-                frame.shape[1],
-                frame.shape[0]
-            )
-        ]
+        continue
 
     # =========================
     # DEFAULT OUTPUT

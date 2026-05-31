@@ -162,16 +162,20 @@ if __name__ == "__main__":
             print(f"\nFolder '{folder_test}' tidak ditemukan atau kosong.")
         else:
             print(f"--- Tes Prediksi (Gambar dari folder {folder_test}) ---")
-            # Ambil file pertama di folder datatest
-            test_file = os.listdir(folder_test)[0]
-            test_path = os.path.join(folder_test, test_file)
             
-            hasil = ef.predict(test_path, threshold=5000) # Threshold bisa disesuaikan
-            
-            print(f"File Uji    : {test_file}")
-            print(f"Prediksi    : {hasil['nama'].upper()}")
-            print(f"Jarak (Euclidean): {hasil['jarak']:.4f}")
-            
-            print("\nUrutan Kandidat Terdekat:")
-            for dist, label in hasil['semua_jarak'][:5]: # Tampilkan top 5
-                print(f" -> {label:<15} (Jarak: {dist:.4f})")
+            # Loop untuk semua file di folder datatest
+            for test_file in os.listdir(folder_test):
+                if not test_file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    continue
+                    
+                test_path = os.path.join(folder_test, test_file)
+                hasil = ef.predict(test_path, threshold=5000) # Threshold bisa disesuaikan
+                
+                print(f"\nFile Uji    : {test_file}")
+                print(f"Prediksi    : {hasil['nama'].upper()}")
+                print(f"Jarak (Euclidean): {hasil['jarak']:.4f}")
+                
+                print("Kandidat Terdekat:")
+                for dist, label in hasil['semua_jarak'][:3]: # Tampilkan top 3 saja agar tidak terlalu panjang
+                    print(f" -> {label:<15} (Jarak: {dist:.4f})")
+            print("\nDemo selesai.")

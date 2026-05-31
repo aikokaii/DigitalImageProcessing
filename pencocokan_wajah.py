@@ -42,8 +42,9 @@ def find_cascade_xml(filename):
 # FUNGSI UTAMA: Proses 1 gambar → hasil pencocokan
 # ============================================================
 
-def proses_gambar(image_path: str, threshold: float, metode: str,
-                  face_cascade, eye_cascade, extractor, matcher) -> dict:
+def proses_gambar(image_path: str, metode: str,
+                  face_cascade, eye_cascade, extractor, matcher,
+                  threshold_override: dict = None):
     """
     Baca gambar → deteksi wajah → crop → ekstrak fitur → cocokkan.
     Return: dict hasil pencocokan
@@ -114,9 +115,9 @@ def proses_gambar(image_path: str, threshold: float, metode: str,
     fitur = hasil_ekstraksi["features"]
 
     # --- Pencocokan ---
-    print(f"Mencocokkan ke database (metode={metode}, threshold={threshold})...")
-    hasil = matcher.match(fitur, threshold=threshold, metode=metode)
-
+    print(f"Mencocokkan ke database (metode={metode})...")
+    hasil = matcher.match(fitur, metode=metode,
+                          threshold_override=threshold_override)
     return hasil
 
 
@@ -124,38 +125,38 @@ def proses_gambar(image_path: str, threshold: float, metode: str,
 # VISUALISASI HASIL DI TERMINAL
 # ============================================================
 
-def tampilkan_hasil(hasil: dict, image_path: str):
-    """Cetak hasil pencocokan ke terminal dengan format yang jelas."""
+CONF_ICON = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🟠", "REJECTED": "🔴"}
+
+def tampilkan_hasil(hasil, image_path: str):
+    """Cetak hasil pencocokan ke terminal — hanya 1 prediksi."""
+    icon = CONF_ICON.get(hasil.confidence, "❓")
     print()
-    print("=" * 55)
+    print("=" * 60)
     print("       HASIL PENCOCOKAN WAJAH (Face Recognition)")
-    print("=" * 55)
-    print(f"  File Input    : {os.path.basename(image_path)}")
-    print(f"  Metode Jarak  : {hasil['metode'].upper()}")
-    print(f"  Threshold     : {hasil['threshold']}")
-    print("-" * 55)
+    print("=" * 60)
+    print(f"  File Input  : {os.path.basename(image_path)}")
+    print(f"  Metode      : {hasil.metode.upper()}")
+    print("-" * 60)
 
-    if hasil["dikenali"]:
-        print(f"  STATUS        : ✅ DIKENALI")
-        print(f"  IDENTITAS     : {hasil['nama'].upper()}")
+    if hasil.dikenali:
+        print(f"  STATUS      : DIKENALI")
+        print(f"  PREDIKSI    : {hasil.nama_prediksi.upper()}")
+        print(f"  KEYAKINAN   : {icon} {hasil.confidence}")
+        print(f"  Skor        : {hasil.skor_terbaik:.4f}")
     else:
-        print(f"  STATUS        : ❌ TIDAK DIKENALI")
-        print(f"  Kandidat Mirip: {hasil['nama_kandidat']} (tidak lolos threshold)")
-
-    metode = hasil["metode"]
-    if metode == "cosine":
-        print(f"  Similarity    : {hasil['jarak']:.4f}  (perlu >= {hasil['threshold']})")
-    else:
-        print(f"  Jarak         : {hasil['jarak']:.4f}  (perlu <= {hasil['threshold']})")
+        print(f"  STATUS      : TIDAK DIKENALI  {icon}")
+        print(f"  Alasan      : {hasil.alasan_reject}")
+        if hasil.semua_skor:
+            print(f"  Kandidat    : {hasil.semua_skor[0][0]} "
+                  f"(skor {hasil.semua_skor[0][1]:.4f})")
 
     print()
-    print("  Peringkat Semua Kandidat:")
-    print(f"  {'Rank':<5} {'Nama':<25} {'Skor':<10}")
-    print(f"  {'-'*40}")
-    for i, (nama, skor) in enumerate(hasil["semua_skor"], 1):
-        marker = " ←" if i == 1 else ""
-        print(f"  {i:<5} {nama:<25} {skor:<10.4f}{marker}")
-    print("=" * 55)
+    print(f"  {'Rank':<4} {'Nama':<25} {'Skor':<10}")
+    print(f"  {'─'*42}")
+    for i, (nama, skor) in enumerate(hasil.semua_skor, 1):
+        marker = " <-- PREDIKSI" if i == 1 and hasil.dikenali else ""
+        print(f"  {i:<4} {nama:<25} {skor:<10.4f}{marker}")
+    print("=" * 60)
 
 
 # ============================================================
@@ -164,17 +165,11 @@ def tampilkan_hasil(hasil: dict, image_path: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Pencocokan Wajah — Tahap 6 & 7 Face Recognition Pipeline"
+        description="Pencocokan Wajah — Face Recognition Pipeline"
     )
     parser.add_argument(
         "gambar",
         help="Path ke file gambar wajah yang ingin dikenali"
-    )
-    parser.add_argument(
-        "--threshold", "-t",
-        type=float,
-        default=None,
-        help="Threshold jarak (default: 12.0 euclidean / 50.0 manhattan / 0.85 cosine)"
     )
     parser.add_argument(
         "--metode", "-m",
@@ -187,6 +182,14 @@ def main():
         default="database_fitur.json",
         help="Path ke file database fitur JSON (default: database_fitur.json)"
     )
+    parser.add_argument(
+        "--absolute", type=float, default=None,
+        help="Override threshold absolute"
+    )
+    parser.add_argument(
+        "--margin", type=float, default=None,
+        help="Override threshold margin rank-1 vs rank-2"
+    )
 
     args = parser.parse_args()
 
@@ -194,6 +197,15 @@ def main():
     if not os.path.exists(args.gambar):
         print(f"[ERROR] File gambar '{args.gambar}' tidak ditemukan!")
         sys.exit(1)
+
+    # Susun threshold override jika ada
+    threshold_override = {}
+    if args.absolute is not None:
+        threshold_override["absolute"] = args.absolute
+    if args.margin is not None:
+        threshold_override["margin_abs"] = args.margin
+    if not threshold_override:
+        threshold_override = None
 
     # --- Load cascade ---
     print("Memuat Haar Cascade (tanpa cv2)...")
@@ -209,12 +221,12 @@ def main():
     # --- Proses ---
     hasil = proses_gambar(
         image_path=args.gambar,
-        threshold=args.threshold,
         metode=args.metode,
         face_cascade=face_cascade,
         eye_cascade=eye_cascade,
         extractor=extractor,
         matcher=matcher,
+        threshold_override=threshold_override,
     )
 
     if hasil:

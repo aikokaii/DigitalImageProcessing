@@ -128,9 +128,9 @@ class FaceFeatureExtractor:
         
         return {
             "features": {
-                "eye_distance": round(eye_dist, 4),
-                "eye_coords": [c1, c2],
-                "nose_coords": [nose_center],
+                "eye_distance": round(eye_dist / 100.0, 4),
+                "eye_coords": [[c[0]/100.0, c[1]/100.0] for c in [c1, c2]],
+                "nose_coords": [[nose_center[0]/100.0, nose_center[1]/100.0]],
                 "nose_box": nose_box,
                 "mouth_coords": [mouth_center],
                 "mouth_box": mouth_box,

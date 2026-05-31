@@ -123,6 +123,7 @@ def main():
         try:
             hasil   = extractor.extract_features(face_100, eyes_100)
             fitur   = hasil["features"]
+            fitur["file"] = image_name
             masks   = hasil["masks"]
         except Exception as e:
             print(f"  [SKIP] Gagal ekstraksi fitur: {e}")

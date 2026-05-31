@@ -100,6 +100,7 @@ def main():
 
         hasil_ekstraksi = extractor.extract_features(face_100, eyes_100)
         fitur = hasil_ekstraksi["features"]
+        fitur["file"] = image_name
 
         db.add_profile(nama_orang, fitur)
         print(f"  -> Profil uji '{nama_orang}' disimpan ke {db_file} (mata terdeteksi: {len(eyes_100)})")
